@@ -11,6 +11,29 @@ export class PackManagerUI {
         this.nameInput = document.getElementById('pack-name');
         this.descInput = document.getElementById('pack-desc');
         this.formatSelect = document.getElementById('pack-format');
+
+        // Add Type Selector dynamically if not in HTML
+        this.container.querySelector('.pack-settings-panel').insertAdjacentHTML('beforeend', `
+            <div class="form-group">
+                <label>Pack Type</label>
+                <select id="pack-type-select" class="input-field">
+                    <option value="resource">Resource Pack (Textures/Sounds)</option>
+                    <option value="data">Datapack (Functions/Loot)</option>
+                    <option value="shader">Shader Pack</option>
+                </select>
+            </div>
+             <div class="form-group">
+                <label>Export Format</label>
+                <select id="export-ext-select" class="input-field">
+                    <option value="zip">.zip (Standard)</option>
+                    <option value="jar">.jar (Mod/Library)</option>
+                </select>
+            </div>
+        `);
+
+        this.typeSelect = document.getElementById('pack-type-select');
+        this.exportExtSelect = document.getElementById('export-ext-select');
+
         this.typeDisplay = document.getElementById('pack-type-display');
 
         this.iconDrop = document.getElementById('pack-icon-drop');
@@ -59,13 +82,36 @@ export class PackManagerUI {
                 const name = this.nameInput ? this.nameInput.value : "My Pack";
                 const desc = this.descInput ? this.descInput.value : "";
                 const fmt = this.formatSelect ? parseInt(this.formatSelect.value) : 34;
+                const type = this.typeSelect ? this.typeSelect.value : 'resource';
+                const ext = this.exportExtSelect ? this.exportExtSelect.value : 'zip';
 
-                this.packBuilder.setMetadata(name, desc, fmt);
-                this.packBuilder.exportPack();
+                this.packBuilder.setMetadata(name, desc, fmt, type);
+                this.packBuilder.exportPack(ext);
+            };
+        }
+
+        if (this.typeSelect) {
+            this.typeSelect.onchange = () => {
+                this.packBuilder.packType = this.typeSelect.value;
+
+                // Adjust Export Format based on Type
+                if (this.typeSelect.value === 'shader') {
+                    // Shaders are usually ZIPs
+                    this.exportExtSelect.value = 'zip';
+                    // Hide JAR option if possible, or just reset it
+                    Array.from(this.exportExtSelect.options).forEach(opt => {
+                        if (opt.value === 'jar') opt.disabled = true;
+                    });
+                } else {
+                    Array.from(this.exportExtSelect.options).forEach(opt => {
+                        if (opt.value === 'jar') opt.disabled = false;
+                    });
+                }
             };
         }
 
         if (this.iconDrop && this.iconInput) {
+            // ... (keep existing icon handler)
             this.iconDrop.onclick = () => this.iconInput.click();
             this.iconInput.onchange = (e) => {
                 if (e.target.files.length) this.handleIcon(e.target.files[0]);

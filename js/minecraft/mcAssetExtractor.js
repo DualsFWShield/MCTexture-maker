@@ -1,145 +1,165 @@
-/**
- * mcAssetExtractor.js
- * Handles extracting assets (textures, sounds) from Minecraft JAR files.
- */
-
 export class MCAssetExtractor {
     constructor() {
-        this.rootHandle = null;
-        this.versions = [];
-        this.selectedVersion = null;
-        this.assets = {
-            textures: {}, // path -> Blob
-            sounds: {},   // path -> Blob
-            models: {},
-            lang: {}
-        };
-        this.onProgress = null; // (percent, msg) => {}
+        this.zip = null;
+        this.files = {}; // path -> zipEntry
+        this.isLoaded = false;
+        this.version = null;
     }
 
-    async setRootHandle(handle) {
-        this.rootHandle = handle;
-        await this.scanVersions();
-    }
-
-    async scanVersions() {
-        if (!this.rootHandle) return;
+    async loadJar(file) {
+        if (!window.JSZip) throw new Error("JSZip not loaded");
 
         try {
-            const versionsDir = await this.rootHandle.getDirectoryHandle('versions');
-            this.versions = [];
+            console.log("Loading JAR:", file.name);
+            this.zip = await JSZip.loadAsync(file);
+            this.files = {};
+            this.version = this.extractVersionFromName(file.name);
 
-            for await (const entry of versionsDir.values()) {
-                if (entry.kind === 'directory') {
-                    // Check if it contains a jar
-                    try {
-                        await entry.getFileHandle(`${entry.name}.jar`);
-                        this.versions.push(entry.name);
-                    } catch (e) {
-                        // No jar, ignore (maybe json only)
+            // Index files
+            this.zip.forEach((relativePath, zipEntry) => {
+                if (!zipEntry.dir) {
+                    // We primarily care about assets and data
+                    if (relativePath.startsWith('assets/') || relativePath.startsWith('data/')) {
+                        this.files[relativePath] = zipEntry;
                     }
-                }
-            }
-
-            // Sort versions (semver-ish)
-            this.versions.sort().reverse();
-            console.log("Found versions:", this.versions);
-
-        } catch (err) {
-            console.error("Could not find versions directory!", err);
-            throw new Error("Invalid .minecraft folder selected. Could not find 'versions' directory.");
-        }
-    }
-
-    async extractVersion(versionId, progressCallback) {
-        this.onProgress = progressCallback;
-        this.reportProgress(0, `Loading ${versionId}.jar...`);
-
-        try {
-            const versionsDir = await this.rootHandle.getDirectoryHandle('versions');
-            const versionDir = await versionsDir.getDirectoryHandle(versionId);
-            const jarHandle = await versionDir.getFileHandle(`${versionId}.jar`);
-            const file = await jarHandle.getFile();
-
-            this.reportProgress(10, "Unzipping JAR...");
-
-            const zip = new JSZip();
-            const zipContent = await zip.loadAsync(file);
-
-            // Filter for assets
-            const assets = [];
-            zipContent.forEach((relativePath, zipEntry) => {
-                if (relativePath.startsWith('assets/minecraft/')) {
-                    assets.push(zipEntry);
+                    if (relativePath === 'pack.mcmeta') {
+                        this.files[relativePath] = zipEntry;
+                    }
                 }
             });
 
-            const total = assets.length;
-            let processed = 0;
+            this.isLoaded = true;
+            console.log(`Loaded ${Object.keys(this.files).length} assets.`);
+            return true;
 
-            console.log(`Found ${total} assets in JAR.`);
-
-            // Process sequentially or in chunks to avoid freezing UI
-            // We prioritize textures and sounds.json
-
-            for (const entry of assets) {
-                const path = entry.name;
-
-                // TEXTURES
-                if (path.startsWith('assets/minecraft/textures/') && (path.endsWith('.png') || path.endsWith('.mcmeta'))) {
-                    const blob = await entry.async('blob');
-                    // Store stripped path: 'block/dirt.png'
-                    const cleanPath = path.replace('assets/minecraft/textures/', '');
-                    this.assets.textures[cleanPath] = blob;
-                }
-
-                // SOUNDS
-                else if (path.startsWith('assets/minecraft/sounds/') && path.endsWith('.ogg')) {
-                    const blob = await entry.async('blob');
-                    const cleanPath = path.replace('assets/minecraft/', '');
-                    this.assets.sounds[cleanPath] = blob;
-                }
-
-                // SOUNDS.JSON
-                else if (path === 'assets/minecraft/sounds.json') {
-                    const text = await entry.async('string');
-                    this.assets.sounds['sounds.json'] = text;
-                }
-
-                // LANG
-                else if (path.startsWith('assets/minecraft/lang/') && path.endsWith('.json')) {
-                    const text = await entry.async('string');
-                    const cleanPath = path.replace('assets/minecraft/lang/', '');
-                    this.assets.lang[cleanPath] = text;
-                }
-
-                processed++;
-                if (processed % 50 === 0) {
-                    this.reportProgress(10 + (processed / total) * 90, `Extracting ${path.split('/').pop()}...`);
-                    // Yield to UI
-                    await new Promise(r => setTimeout(r, 0));
-                }
-            }
-
-            this.reportProgress(100, "Extraction Complete!");
-            return this.assets;
-
-        } catch (err) {
-            console.error("Extraction failed:", err);
-            this.reportProgress(0, "Error: " + err.message);
-            throw err;
+        } catch (e) {
+            console.error("Failed to load JAR:", e);
+            throw e;
         }
     }
 
-    reportProgress(percent, msg) {
-        if (this.onProgress) this.onProgress(percent, msg);
+    extractVersionFromName(name) {
+        // e.g. "1.20.4.jar" -> "1.20.4"
+        const match = name.match(/(\d+\.\d+(\.\d+)?)/);
+        return match ? match[0] : "unknown";
     }
 
-    getTexture(path) {
-        return this.assets.textures[path];
+    getAssetList(type = 'texture') {
+        // type: texture, model, sound, blockstate, data
+        const list = [];
+        const prefix = 'assets/minecraft/';
+
+        for (const path of Object.keys(this.files)) {
+            if (type === 'texture' && path.startsWith(prefix + 'textures/') && path.endsWith('.png')) {
+                list.push(path);
+            } else if (type === 'sound') {
+                // Sounds are usually in assets/minecraft/sounds/ or similar.
+                // The default structure is assets/minecraft/sounds.json for definitions,
+                // but actual files are in assets/minecraft/sounds/...
+                if (path.startsWith(prefix + 'sounds/') && path.endsWith('.ogg')) {
+                    list.push(path);
+                } else {
+                    // console.log("Ignored sound:", path);
+                }
+            } else if (type === 'model' && path.startsWith(prefix + 'models/') && path.endsWith('.json')) {
+                list.push(path);
+            } else if (type === 'data' && path.startsWith('data/')) {
+                list.push(path);
+            }
+        }
+        return list.sort();
     }
 
-    getSound(path) {
-        return this.assets.sounds[path];
+    async getFile(path) {
+        if (!this.files[path]) {
+            console.error("MCAssetExtractor: File not found", path);
+            return null;
+        }
+
+        const ext = path.split('.').pop().toLowerCase();
+
+        // MIME type mapping for binary files
+        const mimeTypes = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'ogg': 'audio/ogg',
+            'wav': 'audio/wav',
+            'mp3': 'audio/mpeg'
+        };
+
+        const isBinary = ext in mimeTypes;
+
+        try {
+            if (isBinary) {
+                // Extract as ArrayBuffer first, then create Blob with correct MIME type
+                const arrayBuffer = await this.files[path].async('arraybuffer');
+                const blob = new Blob([arrayBuffer], { type: mimeTypes[ext] });
+                console.log(`MCAssetExtractor: Loaded binary ${path} (${blob.size} bytes, type: ${blob.type})`);
+                return blob;
+            } else {
+                return await this.files[path].async('string');
+            }
+        } catch (e) {
+            console.error("MCAssetExtractor: Failed to read file", path, e);
+            return null;
+        }
+    }
+
+    /**
+     * Get file as Data URL (base64) - bypasses Tracking Prevention issues
+     * @param {string} path 
+     * @returns {Promise<string|null>} Data URL string
+     */
+    async getFileAsDataURL(path) {
+        if (!this.files[path]) {
+            console.error("MCAssetExtractor: File not found", path);
+            return null;
+        }
+
+        const ext = path.split('.').pop().toLowerCase();
+        const mimeTypes = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'ogg': 'audio/ogg',
+            'wav': 'audio/wav',
+            'mp3': 'audio/mpeg'
+        };
+
+        const mimeType = mimeTypes[ext] || 'application/octet-stream';
+
+        try {
+            // Get as base64 directly from JSZip - this avoids blob URL issues
+            const base64 = await this.files[path].async('base64');
+            const dataURL = `data:${mimeType};base64,${base64}`;
+            console.log(`MCAssetExtractor: Created Data URL for ${path} (type: ${mimeType})`);
+            return dataURL;
+        } catch (e) {
+            console.error("MCAssetExtractor: Failed to create Data URL for", path, e);
+            return null;
+        }
+    }
+
+    async getTextureAsImage(path) {
+        try {
+            // Use Data URL instead of blob URL to bypass Tracking Prevention
+            const dataURL = await this.getFileAsDataURL(path);
+            if (!dataURL) return null;
+
+            const img = new Image();
+
+            return new Promise((resolve, reject) => {
+                img.onload = () => resolve(img);
+                img.onerror = (e) => {
+                    console.error("MCAssetExtractor: Image load failed for", path, e);
+                    reject(e);
+                };
+                img.src = dataURL;
+            });
+        } catch (e) {
+            console.error("MCAssetExtractor: getTextureAsImage failed for", path, e);
+            return null;
+        }
     }
 }

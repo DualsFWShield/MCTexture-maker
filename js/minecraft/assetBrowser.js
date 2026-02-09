@@ -1,194 +1,210 @@
-/**
- * assetBrowser.js
- * Visual browser for extracted Minecraft assets (Textures & Sounds).
- */
-
 export class AssetBrowser {
-    constructor(containerId, extractor, onSelect) {
-        this.container = document.getElementById(containerId);
+    constructor(extractor, onSelect) {
         this.extractor = extractor;
-        this.onSelect = onSelect; // (file, type) => {}
-        this.currentPath = [];
-        this.folderStructure = {};
-    }
-
-    buildStructure() {
-        this.folderStructure = {};
-
-        // Textures
-        if (this.extractor.assets.textures) {
-            Object.keys(this.extractor.assets.textures).forEach(path => {
-                this.addToStructure(path, 'texture');
-            });
-        }
-
-        // Sounds
-        if (this.extractor.assets.sounds) {
-            Object.keys(this.extractor.assets.sounds).forEach(path => {
-                if (path.endsWith('.ogg')) this.addToStructure(path, 'sound');
-            });
-        }
+        this.onSelect = onSelect;
+        this.container = document.createElement('div');
+        this.container.className = 'asset-browser-modal hidden';
+        this.isOpen = false;
 
         this.render();
+        document.body.appendChild(this.container);
     }
 
-    addToStructure(path, type) {
-        const parts = path.split('/');
-        let current = this.folderStructure;
-
-        parts.forEach((part, index) => {
-            if (index === parts.length - 1) {
-                // File
-                current[part] = type;
-            } else {
-                // Directory
-                if (!current[part]) current[part] = {};
-                // If it was marked as a file (collision?), overwrite or ignore?
-                // Minecraft assets usually clean, but 'item' folder vs 'item.png' could conflict if not careful.
-                // Usually folders and files are distinct.
-                if (typeof current[part] === 'string') {
-                    // It was a file, but now acts as folder? 
-                    // This happens if we have 'foo' file and 'foo/bar' file.
-                    // In MC assets, 'textures/entity/steve.png' vs 'textures/entity/steve/...'
-                    // We'll prioritize folder and maybe lose the file or rename it?
-                    // Let's assume distinct.
-                    current[part] = {};
-                }
-                current = current[part];
-            }
-        });
-    }
-
-    render() {
-        this.container.innerHTML = '';
-
-        // Navigation
-        const nav = document.createElement('div');
-        nav.className = 'asset-nav';
-
-        const homeBtn = document.createElement('button');
-        homeBtn.textContent = '🏠 assets';
-        homeBtn.className = 'nav-btn';
-        homeBtn.onclick = () => { this.currentPath = []; this.render(); };
-        nav.appendChild(homeBtn);
-
-        this.currentPath.forEach((folder, index) => {
-            const span = document.createElement('span');
-            span.textContent = ' > ';
-            nav.appendChild(span);
-
-            const btn = document.createElement('button');
-            btn.textContent = folder;
-            btn.className = 'nav-btn';
-            btn.onclick = () => {
-                this.currentPath = this.currentPath.slice(0, index + 1);
-                this.render();
-            };
-            nav.appendChild(btn);
-        });
-
-        this.container.appendChild(nav);
-
-        // Grid
-        const grid = document.createElement('div');
-        grid.className = 'asset-grid';
-
-        let currentDir = this.folderStructure;
-        this.currentPath.forEach(p => {
-            if (currentDir && currentDir[p]) currentDir = currentDir[p];
-            else currentDir = {};
-        });
-
-        // Entries
-        const entries = Object.entries(currentDir).sort((a, b) => {
-            const aIsFile = typeof a[1] === 'string';
-            const bIsFile = typeof b[1] === 'string';
-            if (!aIsFile && bIsFile) return -1;
-            if (aIsFile && !bIsFile) return 1;
-            return a[0].localeCompare(b[0]);
-        });
-
-        if (entries.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'empty-msg';
-            empty.textContent = "Empty Folder";
-            grid.appendChild(empty);
-        }
-
-        entries.forEach(([name, type]) => {
-            const item = document.createElement('div');
-            item.className = 'asset-item';
-
-            if (typeof type !== 'string') {
-                // Folder
-                item.classList.add('folder');
-                item.innerHTML = `
-                    <div class="icon">📁</div>
-                    <div class="name">${name}</div>
-                `;
-                item.onclick = () => {
-                    this.currentPath.push(name);
-                    this.render();
-                };
-            } else {
-                // File
-                const fullPath = [...this.currentPath, name].join('/');
-                item.classList.add('file');
-
-                if (type === 'texture') {
-                    const blob = this.extractor.getTexture(fullPath);
-                    if (blob) {
-                        const url = URL.createObjectURL(blob);
-                        item.innerHTML = `
-                            <div class="thumb" style="background-image: url('${url}')"></div>
-                            <div class="name">${name}</div>
-                        `;
-                    }
-                    item.onclick = () => {
-                        const blob = this.extractor.getTexture(fullPath);
-                        if (blob) {
-                            const file = new File([blob], name, { type: 'image/png' });
-                            if (this.onSelect) this.onSelect(file, 'image');
-                        }
-                    };
-                } else if (type === 'sound') {
-                    item.classList.add('sound-file');
-                    item.innerHTML = `
-                        <div class="icon">🔊</div>
-                        <div class="name">${name}</div>
-                    `;
-                    item.onclick = () => {
-                        const blob = this.extractor.getSound(fullPath);
-                        if (blob) {
-                            const file = new File([blob], name, { type: 'audio/ogg' });
-                            if (this.onSelect) this.onSelect(file, 'audio');
-                        }
-                    };
-                }
-            }
-            grid.appendChild(item);
-        });
-
-        this.container.appendChild(grid);
-
-        // Add styles for new elements if not present
-        const styleId = 'asset-browser-style';
-        if (!document.getElementById(styleId)) {
-            const style = document.createElement('style');
-            style.id = styleId;
-            style.textContent = `
-                .asset-nav { padding: 10px; background: #222; border-bottom: 1px solid #333; overflow-x: auto; white-space: nowrap; }
-                .nav-btn { background: none; border: none; color: #aaa; cursor: pointer; font-family: monospace; }
-                .nav-btn:hover { color: #fff; text-decoration: underline; }
-                .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px; padding: 10px; }
-                .asset-item { background: #333; border: 1px solid #444; border-radius: 4px; padding: 5px; cursor: pointer; text-align: center; }
-                .asset-item:hover { background: #444; border-color: #666; }
-                .asset-item .icon { font-size: 24px; margin-bottom: 5px; }
-                .asset-item .thumb { width: 100%; height: 60px; background-size: contain; background-repeat: no-repeat; background-position: center; margin-bottom: 5px; image-rendering: pixelated; }
-                .asset-item .name { font-size: 10px; color: #ccc; word-break: break-all; overflow: hidden; max-height: 24px; }
-                .asset-item.sound-file .icon { color: #a965ff; }
+    render(isSidebar = false) {
+        if (isSidebar) {
+            this.container.innerHTML = `
+                <div class="ab-sidebar-layout">
+                    <div class="ab-header-compact">
+                        <input type="text" id="ab-search" placeholder="Search...">
+                        <div class="ab-cats-mini">
+                            <button class="ab-cat-mini active" data-cat="texture" title="Textures">🖼️</button>
+                            <button class="ab-cat-mini" data-cat="model" title="Models">📦</button>
+                            <button class="ab-cat-mini" data-cat="sound" title="Sounds">🔊</button>
+                        </div>
+                    </div>
+                    <div class="ab-list" id="ab-list">
+                        <!-- Items injected here -->
+                    </div>
+                </div>
             `;
-            document.head.appendChild(style);
+            // Remove modal classes if present
+            this.container.classList.remove('asset-browser-modal', 'modal-overlay');
+            this.container.classList.add('asset-browser-sidebar');
+        } else {
+            this.container.innerHTML = `
+                <div class="asset-browser-content">
+                    <div class="ab-header">
+                        <h3>Minecraft Assets</h3>
+                        <input type="text" id="ab-search" placeholder="Search assets...">
+                        <button class="btn-close" id="ab-close">X</button>
+                    </div>
+                    <div class="ab-categories">
+                        <button class="ab-cat active" data-cat="texture">Textures</button>
+                        <button class="ab-cat" data-cat="model">Models</button>
+                        <button class="ab-cat" data-cat="sound">Sounds</button>
+                    </div>
+                    <div class="ab-list" id="ab-list">
+                        <!-- Items injected here -->
+                    </div>
+                </div>
+            `;
         }
+
+        this.bindEvents(isSidebar);
+    }
+
+
+
+    bindEvents(isSidebar) {
+        const closeBtn = this.container.querySelector('#ab-close');
+        if (closeBtn) {
+            closeBtn.onclick = () => this.close();
+        }
+
+        const searchInput = this.container.querySelector('#ab-search');
+        if (searchInput) {
+            searchInput.oninput = (e) => this.filter(e.target.value);
+        }
+
+        // Support both regular and mini category buttons
+        const cats = this.container.querySelectorAll('.ab-cat, .ab-cat-mini');
+        cats.forEach(btn => {
+            btn.onclick = () => {
+                cats.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.loadCategory(btn.dataset.cat);
+            };
+        });
+    }
+
+    open() {
+        if (!this.extractor.isLoaded) {
+            alert("No Minecraft JAR loaded!");
+            return;
+        }
+
+        // Check if we are in sidebar mode
+        const sidebarContainer = document.getElementById('asset-browser');
+        if (sidebarContainer) {
+            this.container = sidebarContainer;
+            this.container.classList.remove('hidden');
+            this.render(true); // true = sidebar mode
+        } else {
+            this.container.classList.remove('hidden');
+        }
+
+        this.isOpen = true;
+        this.loadCategory('texture');
+    }
+
+    close() {
+        this.container.classList.add('hidden');
+        this.isOpen = false;
+    }
+
+    loadCategory(cat) {
+        this.currentCat = cat;
+        const list = this.extractor.getAssetList(cat);
+        this.renderList(list);
+    }
+
+    renderList(items) {
+        const listEl = this.container.querySelector('#ab-list');
+        listEl.innerHTML = '';
+
+        const limit = 200;
+        let count = 0;
+
+        for (const isAsset of items) {
+            if (count > limit) break;
+
+            const item = document.createElement('div');
+            item.className = 'ab-item';
+
+            // Clean path
+            const name = isAsset.replace('assets/minecraft/', '');
+
+            // Layout: [Name       ] [Batch+]
+            item.style.display = 'flex';
+            item.style.justifyContent = 'space-between';
+            item.style.alignItems = 'center';
+
+            const span = document.createElement('span');
+            span.textContent = name;
+            span.style.overflow = 'hidden';
+            span.style.textOverflow = 'ellipsis';
+            span.style.flex = '1';
+
+            // Click on Name -> Open
+            span.onclick = async () => {
+                console.log("AssetBrowser: Clicked", isAsset);
+                // If not sidebar, close
+                if (!this.container.classList.contains('asset-browser-sidebar')) {
+                    this.close();
+                }
+                if (this.onSelect) {
+                    console.log("AssetBrowser: Calling onSelect");
+                    this.onSelect(isAsset);
+                } else {
+                    console.error("AssetBrowser: No onSelect callback defined!");
+                }
+            };
+
+            // Add to Batch Button
+            const batchBtn = document.createElement('button');
+            batchBtn.innerHTML = '+';
+            batchBtn.title = 'Add to Batch Queue';
+            batchBtn.style.padding = '2px 6px';
+            batchBtn.style.fontSize = '0.8rem';
+            batchBtn.style.background = '#444';
+            batchBtn.style.border = '1px solid #555';
+            batchBtn.style.color = '#fff';
+            batchBtn.style.borderRadius = '4px';
+            batchBtn.style.marginLeft = '5px';
+            batchBtn.style.cursor = 'pointer';
+
+            batchBtn.onclick = async (e) => {
+                e.stopPropagation(); // Don't trigger open
+                // Fetch blob
+                const blob = await this.extractor.getFile(isAsset);
+                if (blob) {
+                    const file = new File([blob], name.split('/').pop(), { type: 'image/png' });
+                    // Access BatchManager?
+                    // AssetBrowser doesn't know about ImageProcessor/BatchManager directly.
+                    // We can dispatch event or use global STATE (which is in main.js scope).
+                    // Or we can pass batchManager in constructor.
+                    // For now, let's look for global STATE or dispatch CustomEvent.
+
+                    const event = new CustomEvent('batch-add-file', { detail: { file } });
+                    document.dispatchEvent(event);
+
+                    // Visual feedback
+                    batchBtn.textContent = '✓';
+                    setTimeout(() => batchBtn.textContent = '+', 1000);
+                }
+            };
+
+            item.appendChild(span);
+            item.appendChild(batchBtn);
+            listEl.appendChild(item);
+            count++;
+        }
+
+        if (items.length > limit) {
+            const more = document.createElement('div');
+            more.className = 'ab-more';
+            more.textContent = `...and ${items.length - limit} more. Use search.`;
+            listEl.appendChild(more);
+        }
+    }
+
+    filter(query) {
+        if (!query) {
+            this.loadCategory(this.currentCat);
+            return;
+        }
+        const list = this.extractor.getAssetList(this.currentCat);
+        const filtered = list.filter(p => p.toLowerCase().includes(query.toLowerCase()));
+        this.renderList(filtered);
     }
 }

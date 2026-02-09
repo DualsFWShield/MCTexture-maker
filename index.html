@@ -32,6 +32,8 @@
             </nav>
 
             <div class="header-controls">
+                <button id="global-add-pack-btn" class="btn btn-primary" title="Add current work to pack">📦 Add to
+                    Pack</button>
                 <button id="import-mc-btn" class="btn btn-secondary">📁
                     Import .minecraft</button>
                 <button id="export-btn" class="btn btn-primary" disabled>EXPORTER</button>
@@ -65,23 +67,40 @@
             <section class="preview-area" id="drop-zone">
                 <!-- Tab Content: Textures -->
                 <div class="tab-content" id="tab-textures">
-                    <div class="preview-container" id="preview-container">
-                        <div class="upload-prompt">
-                            <div class="icon-upload">⇪</div>
-                            <h3>GLISSEZ UNE TEXTURE</h3>
-                            <p>FORMATS: PNG, JPG (16x16, 32x32, 64x64...)</p>
-                            <input type="file" id="file-input" hidden accept="image/*,audio/*">
-                            <button class="btn btn-secondary"
-                                onclick="document.getElementById('file-input').click()">PARCOURIR</button>
+                    <div class="editor-layout">
+                        <!-- Vertical Toolbar (Generated in JS or static here) -->
+                        <div class="drawing-toolbar-vertical" id="main-toolbar">
+                            <!-- Icons injected via JS -->
                         </div>
-                        <canvas id="main-canvas" hidden></canvas>
-                        <div id="audio-visualizer" hidden></div>
+
+                        <div class="preview-area-wrapper">
+                            <div class="preview-container" id="preview-container">
+                                <div class="upload-prompt">
+                                    <div class="icon-upload">⇪</div>
+                                    <h3>GLISSEZ UNE TEXTURE</h3>
+                                    <p>FORMATS: PNG, JPG (16x16, 32x32...)</p>
+                                    <input type="file" id="file-input" hidden accept="image/*,audio/*">
+                                    <button class="btn btn-secondary"
+                                        onclick="document.getElementById('file-input').click()">PARCOURIR</button>
+                                </div>
+
+                                <div class="canvas-stack" id="canvas-stack" hidden>
+                                    <canvas id="main-canvas"></canvas>
+                                    <canvas id="drawing-canvas" class="interactive"></canvas>
+                                </div>
+
+                                <div id="audio-visualizer" hidden></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Tab Content: Sounds -->
                 <div class="tab-content" id="tab-sounds" hidden>
                     <div class="sounds-workspace">
+                        <div class="workspace-header-bar">
+                            <h3>SOUNDS EDITOR</h3>
+                        </div>
                         <div class="upload-prompt">
                             <div class="icon-upload">🔊</div>
                             <h3>ÉDITEUR DE SONS</h3>
@@ -225,6 +244,43 @@
                 MC Creator v1.0.0
             </div>
         </footer>
+        <!-- Import .minecraft Modal -->
+        <div id="import-modal" class="modal-overlay" hidden>
+            <div class="modal">
+                <div class="modal-header">
+                    <h2>Import Minecraft Assets</h2>
+                    <button class="btn-close" id="close-import-modal">X</button>
+                </div>
+                <div class="modal-body">
+                    <p>Due to browser security, we cannot directly access <code>.minecraft</code>.</p>
+                    <p>Please select a specific <strong>Version JAR</strong> file.</p>
+
+                    <div class="path-helper">
+                        <label>Typical Path (Windows):</label>
+                        <div class="code-box">
+                            <code id="mc-path">%APPDATA%\.minecraft\versions</code>
+                            <button class="btn-icon" id="copy-path-btn" title="Copy to Clipboard">📋</button>
+                        </div>
+                    </div>
+
+                    <div class="step-guide">
+                        <ol>
+                            <li>Copy the path above.</li>
+                            <li>Click <strong>Select JAR File</strong> below.</li>
+                            <li>Paste the path in the file explorer address bar.</li>
+                            <li>Open a version folder (e.g. <code>1.20.4</code>) and select the <code>.jar</code> file.
+                            </li>
+                        </ol>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button class="btn btn-primary btn-large" id="trigger-jar-import">📂 SELECT JAR FILE</button>
+                    </div>
+                    <input type="file" id="modal-jar-input" hidden accept=".jar">
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <!-- Scripts -->

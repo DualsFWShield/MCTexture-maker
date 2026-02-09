@@ -14,34 +14,69 @@ export class BatchManager {
         this.uiContainer = null;
     }
 
+    destroy() {
+        if (this.statusEl) {
+            const dropZone = this.statusEl.closest('.batch-drop-zone');
+            if (dropZone) dropZone.remove();
+        }
+    }
+
     // Initialize the Batch UI area (Drag & Drop zone)
     initUI(containerId) {
-        let parent = document.getElementById(containerId);
-        if (!parent) return;
+        let container = document.getElementById(containerId);
+
+        // Fallback if specific container not found, append to main workspace
+        if (!container) {
+            console.warn("BatchManager: ui-container not found, falling back to .workspace-area");
+            container = document.querySelector('.workspace-area');
+        }
+        if (!container) {
+            console.error("BatchManager: No container found for Batch UI!");
+            return;
+        }
+        console.log("BatchManager: Initializing UI in", container);
 
         // Create Drop Zone
+        // GLOBAL CLEANUP: Remove ANY existing batch drop zone by ID to prevent duplicates
+        const existingGlobal = document.getElementById('global-batch-drop-zone');
+        if (existingGlobal) existingGlobal.remove();
+
         const dropZone = document.createElement('div');
+        dropZone.id = 'global-batch-drop-zone'; // Enforce Unique ID
         dropZone.className = 'batch-drop-zone';
         dropZone.innerHTML = `
             <div class="batch-icon">📂</div>
             <h3>BATCH PROCESSING</h3>
-            <p>Drag & Drop multiple images here to apply current effect chain.</p>
+            <p>Drag images here or Add from Assets</p>
+            
+            <div id="batch-queue-list" class="batch-queue-list" style="max-height:100px; overflow-y:auto; margin:10px 0; background:rgba(0,0,0,0.2); text-align:left; font-size:0.8rem; padding:5px;">
+                <div style="color:#aaa; text-align:center;">Queue empty</div>
+            </div>
+
+            <div class="batch-controls" style="display:flex; gap:5px; justify-content:center;">
+                <button id="batch-add-btn" class="btn btn-secondary btn-small">➕ Add File</button>
+                <button id="batch-clear-btn" class="btn btn-danger btn-small" disabled>🗑️</button>
+                <button id="batch-run-btn" class="btn btn-primary btn-small" disabled>▶️ RUN</button>
+            </div>
+            
             <input type="file" id="batch-input" multiple accept="image/*" style="display:none">
-            <button id="batch-select-btn" class="btn btn-secondary">SELECT FILES</button>
-            <div id="batch-status" class="batch-status"></div>
+            <div id="batch-status" class="batch-status" style="margin-top:10px;"></div>
         `;
 
         // Style
         dropZone.style.border = '2px dashed var(--accent-secondary)';
-        dropZone.style.padding = '20px';
+        dropZone.style.padding = '15px';
         dropZone.style.textAlign = 'center';
         dropZone.style.marginTop = '20px';
         dropZone.style.borderRadius = '8px';
         dropZone.style.background = 'rgba(255,255,255,0.05)';
         dropZone.style.transition = 'all 0.3s ease';
 
-        parent.appendChild(dropZone);
+        container.appendChild(dropZone);
         this.statusEl = dropZone.querySelector('#batch-status');
+        this.queueListEl = dropZone.querySelector('#batch-queue-list');
+        this.runBtn = dropZone.querySelector('#batch-run-btn');
+        this.clearBtn = dropZone.querySelector('#batch-clear-btn');
 
         // Events
         dropZone.ondragover = (e) => {
@@ -63,25 +98,68 @@ export class BatchManager {
         };
 
         const input = dropZone.querySelector('#batch-input');
-        const btn = dropZone.querySelector('#batch-select-btn');
-        btn.onclick = () => input.click();
+        dropZone.querySelector('#batch-add-btn').onclick = () => input.click();
+
+        this.runBtn.onclick = () => this.startBatch();
+        this.clearBtn.onclick = () => {
+            this.queue = [];
+            this.updateQueueUI();
+        };
+
         input.onchange = (e) => {
             if (e.target.files.length > 0) this.handleFiles(e.target.files);
+            input.value = ''; // Reset
         };
     }
 
-    async handleFiles(fileList) {
-        if (this.isProcessing) return;
-        this.queue = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+    handleFiles(fileList) {
+        const newFiles = Array.from(fileList).filter(f => f.type.startsWith('image/'));
+        if (newFiles.length === 0) return;
+
+        this.queue.push(...newFiles);
+        this.updateQueueUI();
+    }
+
+    addFile(file) {
+        if (!file.type.startsWith('image/')) return;
+        this.queue.push(file);
+        this.updateQueueUI();
+    }
+
+    updateQueueUI() {
+        if (!this.queueListEl) return;
 
         if (this.queue.length === 0) {
-            alert("No valid images found.");
+            this.queueListEl.innerHTML = '<div style="color:#aaa; text-align:center;">Queue empty</div>';
+            this.runBtn.disabled = true;
+            this.clearBtn.disabled = true;
             return;
         }
 
-        if (!confirm(`Begin Batch Processing for ${this.queue.length} images using current settings?`)) return;
+        this.runBtn.disabled = false;
+        this.clearBtn.disabled = false;
+        this.queueListEl.innerHTML = '';
 
-        this.startBatch();
+        this.queue.forEach((f, i) => {
+            const row = document.createElement('div');
+            row.style.display = 'flex';
+            row.style.justifyContent = 'space-between';
+            row.style.borderBottom = '1px solid #444';
+            row.style.padding = '2px';
+
+            row.innerHTML = `
+                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80%;" title="${f.name}">${f.name}</span>
+                <span style="cursor:pointer; color:#f55;" onclick="this.dispatchEvent(new CustomEvent('remove-item', {bubbles:true, detail:${i}}))">×</span>
+            `;
+
+            // Event delegation workaround or direct listener
+            row.querySelector('span:last-child').onclick = () => {
+                this.queue.splice(i, 1);
+                this.updateQueueUI();
+            };
+
+            this.queueListEl.appendChild(row);
+        });
     }
 
     async startBatch() {

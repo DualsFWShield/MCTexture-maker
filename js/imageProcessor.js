@@ -12,27 +12,35 @@ import { DrawingManager } from './img/DrawingManager.js';
 
 export class ImageProcessor {
     constructor(canvas) {
-        this.canvas = canvas;
+        this.canvas = canvas; // Output Canvas (Render)
         this.ctx = canvas.getContext('2d', { willReadFrequently: true });
-        this.ctx.imageSmoothingEnabled = false; // Pixel art mode
+        this.ctx.imageSmoothingEnabled = false;
 
-        this.originalImage = null;
-        this.currentFilePath = null; // Store loaded file path (from extractor)
+        // New: Source Canvas (Holds the actual pixel data)
+        this.sourceCanvas = document.createElement('canvas'); // Offscreen
+        this.sourceCtx = this.sourceCanvas.getContext('2d', { willReadFrequently: true });
+
+        // New: Interactive Canvas (Top layer for events/cursors)
+        this.drawingCanvas = document.getElementById('drawing-canvas');
+
+        this.originalImage = null; // Keeps reference to original file object if needed, but pixel data is in sourceCanvas
+        this.currentFilePath = null;
         this.videoElement = null;
-        this.sourceType = 'image'; // image | video
-        this.onSaveToPack = null; // Callback (blob, path) => {}
+        this.sourceType = 'image';
+        this.onSaveToPack = null;
 
         this.showGrid = false;
         this.gridSize = 16;
 
+        // Ensure UI Builder targets the new rack
         this.ui = new UIBuilder('modules-rack');
 
         // Pipeline Definition
         this.pipeline = [
-            PreProcessEffect, // Levels, Blur, Noise, Sharpen
-            HalftoneEffect,   // Print style
-            DitherEffect,     // Quantize & Tone
-            GlitchEffect      // Post-process corruption
+            PreProcessEffect,
+            HalftoneEffect,
+            DitherEffect,
+            GlitchEffect
         ];
 
         this.state = {};
@@ -44,40 +52,36 @@ export class ImageProcessor {
         this.previewScale = 1.0;
 
         // Recorder & Animator
-        this.exportFormat = 'gif'; // Default
-        this.animator = null; // Instantiated on load to access UI
+        this.exportFormat = 'gif';
+        this.animator = null;
 
         // Drawing Manager
         this.drawingManager = null;
 
         // GPU Manager
         this.glManager = null;
-        this.gpuCanvas = document.createElement('canvas'); // Offscreen canvas for WebGL
+        this.gpuCanvas = document.createElement('canvas');
         this.useGPU = true;
 
         // Texture / Background Settings
-        this.backgroundMode = 'image'; // 'image', 'color', 'transparent'
+        this.backgroundMode = 'image';
         this.backgroundColor = '#000000';
 
-        // Export Settings
         // Export Settings
         this.exportSettings = {
             format: 'png',
             resolutions: {
-                16: false,
-                32: false,
-                64: false,
-                128: false,
-                256: false,
-                512: false
+                1: false, 2: false, 4: false, 8: false,
+                16: false, 32: false, 64: false,
+                128: false, 256: false, 512: false
             },
             original: true
         };
     }
 
     loadImage(file) {
+        console.log("ImageProcessor: Loading Image...", file.name, file.type, file.size);
         this.sourceType = 'image';
-        // Cleanup methods...
         if (this.videoElement) {
             this.videoElement.pause();
             this.videoElement.remove();
@@ -86,44 +90,45 @@ export class ImageProcessor {
 
         const reader = new FileReader();
         reader.onload = (e) => {
+            console.log("ImageProcessor: FileReader loaded. Creating Image object...");
             const img = new Image();
             img.onload = () => {
-                // Smart Resize / Crop Logic
-                const size = this.processImportSize(img);
+                console.log("ImageProcessor: Image object loaded. Drawing to source canvas...", img.width, "x", img.height);
+                try {
+                    // Initialize Source Canvas with Image Data
+                    this.sourceCanvas.width = img.width;
+                    this.sourceCanvas.height = img.height;
+                    this.sourceCtx.drawImage(img, 0, 0);
 
-                // Create temp canvas to resize/crop
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = size.w;
-                tempCanvas.height = size.h;
-                const ctx = tempCanvas.getContext('2d');
-                ctx.imageSmoothingEnabled = false;
+                    this.originalImage = img; // Keep ref just in case
 
-                // Center & Crop (or Scale - decided by user preference? Force crop for now as per pixel art standard)
-                // Actually, let's do a simple Scale to Fit Nearest Neighbor for now as it's more robust for random images
-                // User asked for "Crop or Scale". Let's default to Scale to Fit Power of 2 if possible, or just keep original if small?
-                // Let's keep original dimensions but ensure they are workable.
+                    // Show Canvas Stack
+                    document.getElementById('canvas-stack').hidden = false;
+                    const prompt = document.getElementById('preview-container').querySelector('.upload-prompt');
+                    if (prompt) prompt.hidden = true;
 
-                ctx.drawImage(img, 0, 0, size.w, size.h);
-
-                const newImg = new Image();
-                newImg.onload = () => {
-                    this.originalImage = newImg;
-                    this.setupPreview(newImg);
+                    this.setupPreview(img);
                     this.initSystem();
-                };
-                newImg.src = tempCanvas.toDataURL();
+                    console.log("ImageProcessor: System Initialized.");
+                } catch (err) {
+                    console.error("ImageProcessor: Error during initialization:", err);
+                    alert("Error initializing image processor: " + err.message);
+                }
+            };
+            img.onerror = (err) => {
+                console.error("ImageProcessor: Failed to load Image object from data URL.", err);
+                alert("Failed to load image data.");
             };
             img.src = e.target.result;
+        };
+        reader.onerror = (err) => {
+            console.error("ImageProcessor: FileReader error:", err);
+            alert("Failed to read file.");
         };
         reader.readAsDataURL(file);
     }
 
     processImportSize(img) {
-        // Simple logic: If too big, scale down. If not power of 2, warn? 
-        // For now, just return dimensions. 
-        // TODO: Implement advanced resize/crop dialog if requested.
-        // User request: "Tool to crop or scale".
-        // For V1 of overhaul, let's just use original size but sanitize max size.
         let w = img.width;
         let h = img.height;
         return { w, h };
@@ -131,7 +136,7 @@ export class ImageProcessor {
 
     loadVideo(file) {
         this.sourceType = 'video';
-        this.originalImage = null; // Cleanup image
+        this.originalImage = null;
 
         const url = URL.createObjectURL(file);
 
@@ -141,15 +146,13 @@ export class ImageProcessor {
         }
         this.videoElement = document.createElement('video');
         this.videoElement.src = url;
-        this.videoElement.muted = true; // Auto-play requires mute often
+        this.videoElement.muted = true;
         this.videoElement.loop = true;
         this.videoElement.playsInline = true;
 
         this.videoElement.onloadedmetadata = () => {
             this.setupPreview({ width: this.videoElement.videoWidth, height: this.videoElement.videoHeight });
             this.initSystem();
-
-            // Auto Play
             this.videoElement.play();
             this.renderVideo();
         };
@@ -165,10 +168,13 @@ export class ImageProcessor {
             this.drawingManager = new DrawingManager(this);
         }
 
+        // Pass the Source Canvas to Drawing Manager so it draws on the base layer
+        this.drawingManager.setTarget(this.sourceCanvas, this.drawingCanvas);
+
         // Batch Manager
         if (!this.batchManager) {
             this.batchManager = new BatchManager(this);
-            this.batchManager.initUI('ui-container'); // Appends to main container
+            this.batchManager.initUI('ui-container');
         }
 
         // Controls
@@ -190,115 +196,96 @@ export class ImageProcessor {
 
     setupRefreshedControls() {
         const header = document.querySelector('.header-controls');
-        // Remove old buttons
-        ['record-btn', 'quick-btn', 'save-pack-btn'].forEach(id => {
+        // Remove old buttons logic if needed
+        ['save-pack-btn'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.remove();
         });
 
-        // Remove existing toolbars
-        const existingToolbar = document.querySelector('.drawing-toolbar');
-        if (existingToolbar) existingToolbar.remove();
-
-        const exportMain = document.getElementById('export-btn');
-        exportMain.textContent = "EXPORT (ADV)";
-        exportMain.onclick = () => {
-            // Advanced Export Dialog
-            alert("Advanced Export settings can be found in the sidebar.");
-            this.exportResult(false);
-        };
+        // Setup Main Toolbar (Vertical)
+        const toolbar = document.getElementById('main-toolbar');
+        toolbar.innerHTML = ''; // Clear existing
 
         if (this.sourceType === 'image') {
-            // Add Drawing Toolbar to the Preview Container (above canvas)
-            const previewContainer = document.getElementById('preview-container');
-            const toolbar = document.createElement('div');
-            toolbar.className = 'drawing-toolbar';
-
-            // Tools
             const tools = [
-                { id: 'pencil', icon: '✏️' },
-                { id: 'eraser', icon: '🧹' },
-                { id: 'picker', icon: '💉' },
-                { id: 'bucket', icon: '🪣' }
+                { id: 'select', icon: '⛶', title: 'Select (S)' },
+                { id: 'pencil', icon: '✏️', title: 'Pencil (P)' },
+                { id: 'eraser', icon: '🧹', title: 'Eraser (E)' },
+                { id: 'picker', icon: '💉', title: 'Color Picker (I)' },
+                { id: 'bucket', icon: '🪣', title: 'Fill Bucket (G)' },
+                { id: 'text', icon: 'T', title: 'Text Tool' },
+                { id: 'crop', icon: '✂️', title: 'Crop / Resize' },
+                { id: 'move', icon: '✋', title: 'Pan/Move' }
             ];
 
             tools.forEach(t => {
                 const btn = document.createElement('div');
                 btn.className = `draw-tool-btn ${t.id === 'pencil' ? 'active' : ''}`;
                 btn.innerHTML = t.icon;
+                btn.title = t.title;
                 btn.onclick = () => {
                     this.drawingManager.activeTool = t.id;
-                    document.querySelectorAll('.draw-tool-btn').forEach(b => b.classList.remove('active'));
+                    toolbar.querySelectorAll('.draw-tool-btn').forEach(b => b.classList.remove('active'));
                     btn.classList.add('active');
+
+                    // Special handling for Crop if it's an action, not a tool?
+                    // If it's a tool, DrawingManager handles click. 
+                    // If it's a dialog, better to have it here. 
+                    // Let's handle 'crop' click here to open dialog immediately?
+                    if (t.id === 'crop') {
+                        // Deselect visual since it's an action
+                        // Or if it's a "Select & Crop" tool, keep selected.
+                        // Let's make it a tool that opens a dialog on click for V1
+                        this.openCropDialog();
+                    }
                 };
                 toolbar.appendChild(btn);
             });
 
-            // Color Picker
-            const colorContainer = document.createElement('div');
-            colorContainer.className = 'color-preview-container';
+            // OPTIONS POPOUT (Color & Size)
+            // Instead of inline, let's append a settings panel or keep it simple in the toolbar
+            // For vertical toolbar, proper popouts are better, but let's put them at the bottom for now
 
-            const colorPreview = document.createElement('div');
-            colorPreview.className = 'color-preview';
-            colorPreview.id = 'tool-color-preview';
-            colorPreview.style.backgroundColor = '#ffffff';
-            colorPreview.title = "Current Color";
+            // Spacer
+            const spacer = document.createElement('div');
+            spacer.style.flex = '1';
+            toolbar.appendChild(spacer);
+
+            // Color
+            const colorWrap = document.createElement('div');
+            colorWrap.className = 'draw-tool-btn';
+            colorWrap.style.background = this.drawingManager.color;
+            colorWrap.style.border = '2px solid #fff';
+            colorWrap.title = "Current Color";
 
             const colorInput = document.createElement('input');
             colorInput.type = 'color';
-            colorInput.id = 'tool-color-picker';
-            colorInput.value = '#ffffff';
             colorInput.style.opacity = 0;
             colorInput.style.position = 'absolute';
-            colorInput.style.width = '0';
+            colorInput.style.width = '100%';
+            colorInput.style.height = '100%';
+            colorInput.value = this.drawingManager.color;
 
-            colorPreview.onclick = () => colorInput.click();
             colorInput.oninput = (e) => {
                 this.drawingManager.color = e.target.value;
-                colorPreview.style.backgroundColor = e.target.value;
+                colorWrap.style.background = e.target.value;
             };
 
-            colorContainer.appendChild(colorPreview);
-            colorContainer.appendChild(colorInput);
-            toolbar.appendChild(colorContainer);
+            colorWrap.appendChild(colorInput);
+            toolbar.appendChild(colorWrap);
+        }
+    }
 
-            // Brush Size Slider
-            const sizeContainer = document.createElement('div');
-            sizeContainer.style.display = 'flex';
-            sizeContainer.style.alignItems = 'center';
-            sizeContainer.style.marginLeft = '10px';
-            sizeContainer.style.gap = '5px';
+    updateToolbarColor(color) {
+        // Find the color input and wrapper in the toolbar
+        const colorInput = document.querySelector('#main-toolbar input[type="color"]');
+        const colorWrap = document.querySelector('#main-toolbar .draw-tool-btn[title="Current Color"]');
 
-            const sizeLabel = document.createElement('span');
-            sizeLabel.textContent = "Size: 1px";
-            sizeLabel.style.fontSize = '0.8rem';
-            sizeLabel.style.color = '#ccc';
-
-            const sizeSlider = document.createElement('input');
-            sizeSlider.type = 'range';
-            sizeSlider.min = 1;
-            sizeSlider.max = 8;
-            sizeSlider.value = 1;
-            sizeSlider.style.width = '60px';
-            sizeSlider.oninput = (e) => {
-                this.drawingManager.brushSize = parseInt(e.target.value);
-                sizeLabel.textContent = `Size: ${e.target.value}px`;
-            };
-
-            sizeContainer.appendChild(sizeLabel);
-            sizeContainer.appendChild(sizeSlider);
-            toolbar.appendChild(sizeContainer);
-
-            // Insert Toolbar before Canvas
-            const canvas = document.getElementById('main-canvas');
-            previewContainer.insertBefore(toolbar, canvas);
-
-            // SAVE TO PACK
-            const savePack = this.createBtn('SAVE TO PACK', 'save-pack-btn', () => this.saveToPack());
-            savePack.style.background = 'var(--accent-primary)';
-            savePack.style.color = '#000';
-            savePack.style.fontWeight = 'bold';
-            header.insertBefore(savePack, exportMain);
+        if (colorInput) {
+            colorInput.value = color;
+        }
+        if (colorWrap) {
+            colorWrap.style.background = color;
         }
     }
 
@@ -324,21 +311,142 @@ export class ImageProcessor {
         // Dynamic Mobile Optimization
         const isMobile = window.innerWidth <= 768;
         const maxPreview = isMobile ? 600 : 960; // Reduce load on mobile GPU
+        const minPreview = isMobile ? 256 : 512; // Minimum size for comfortable editing
 
         let w = img.width;
         let h = img.height;
 
-        if (w > maxPreview || h > maxPreview) {
+        console.log("setupPreview: Original image size:", w, "x", h);
+
+        // Scale UP small images (like 16x16 Minecraft textures)
+        if (w < minPreview && h < minPreview) {
+            // Calculate how many times we can multiply while staying under max
+            const scaleUp = Math.floor(Math.min(maxPreview / w, maxPreview / h));
+            // Use the larger of: fit to minPreview OR integer scale
+            const targetScale = Math.max(minPreview / Math.max(w, h), scaleUp);
+            this.previewScale = targetScale;
+            w *= targetScale;
+            h *= targetScale;
+            console.log("setupPreview: Scaled UP by", targetScale, "to", w, "x", h);
+        }
+        // Scale DOWN large images
+        else if (w > maxPreview || h > maxPreview) {
             const ratio = Math.min(maxPreview / w, maxPreview / h);
             this.previewScale = ratio;
             w *= ratio;
             h *= ratio;
+            console.log("setupPreview: Scaled DOWN by", ratio, "to", w, "x", h);
         } else {
             this.previewScale = 1.0;
         }
 
+        // Ensure integer dimensions
+        w = Math.round(w);
+        h = Math.round(h);
+
         this.canvas.width = w;
         this.canvas.height = h;
+
+        // Sync Interactive Canvas to Preview Size
+        if (this.drawingCanvas) {
+            this.drawingCanvas.width = w;
+            this.drawingCanvas.height = h;
+        }
+
+        console.log("setupPreview: Final canvas size:", this.canvas.width, "x", this.canvas.height);
+    }
+
+    /**
+     * Resize preview canvas to a specific target resolution (e.g., 512x512).
+     * Used by the preview resolution selector UI.
+     */
+    setupPreviewWithResolution(targetSize) {
+        const isMobile = window.innerWidth <= 768;
+        const visualMin = isMobile ? 300 : 512; // Minimum visual size in pixels
+
+        // 1. Set Internal Resolution (Actual pixels)
+        this.canvas.width = targetSize;
+        this.canvas.height = targetSize;
+
+        // 2. Set Visual Size (CSS Pixels)
+        // If target is small (e.g. 32x32), we scale it up visually to at least visualMin (e.g. 512px)
+        // If target is large (e.g. 2048x2048), we let CSS max-width constrain it naturally or set it to match.
+
+        let visualSize = Math.max(targetSize, visualMin);
+
+        this.canvas.style.width = `${visualSize}px`;
+        this.canvas.style.height = `${visualSize}px`;
+
+        // Log for debugging
+        console.log(`setupPreviewWithResolution: Internal ${targetSize}x${targetSize} -> Visual ${visualSize}px`);
+
+        // 3. Sync Interactive Canvas
+        if (this.drawingCanvas) {
+            this.drawingCanvas.width = targetSize;
+            this.drawingCanvas.height = targetSize;
+            this.drawingCanvas.style.width = `${visualSize}px`;
+            this.drawingCanvas.style.height = `${visualSize}px`;
+        }
+
+        // 4. Disable smoothing on the main context for sharp scaling
+        this.ctx.imageSmoothingEnabled = false;
+
+        // Update scale factor for internal logic if needed
+        const sw = this.sourceCanvas.width;
+        this.previewScale = targetSize / sw;
+    }
+
+    openCropDialog() {
+        const w = this.sourceCanvas.width;
+        const h = this.sourceCanvas.height;
+
+        const newW = prompt("New Width:", w);
+        if (!newW) return;
+        const newH = prompt("New Height:", h);
+        if (!newH) return;
+
+        const width = parseInt(newW);
+        const height = parseInt(newH);
+
+        if (isNaN(width) || isNaN(height) || width <= 0 || height <= 0) {
+            alert("Invalid dimensions.");
+            return;
+        }
+
+        // Resize logic: Create new canvas, draw old one centered or top-left?
+        const temp = document.createElement('canvas');
+        temp.width = width;
+        temp.height = height;
+        const tCtx = temp.getContext('2d');
+        tCtx.imageSmoothingEnabled = false;
+
+        // Default: Center? Or Top-Left?
+        // Let's do Top-Left for now as it's standard for resizing without 'anchor' UI
+        tCtx.drawImage(this.sourceCanvas, 0, 0);
+
+        // Update Source Canvas
+        this.sourceCanvas.width = width;
+        this.sourceCanvas.height = height;
+        this.sourceCtx.imageSmoothingEnabled = false; // Reset after resize
+        this.sourceCtx.clearRect(0, 0, width, height);
+        this.sourceCtx.drawImage(temp, 0, 0);
+
+        // We also need to update Drawing Manager targets because sourceCanvas size changed!
+        // But sourceCanvas object is same? No, resizing clears context usually or we just drew to it.
+        // Wait, setting width/height clears canvas. 
+        // We drew temp back to sourceCanvas.
+
+        // Update Interactive Canvas size
+        if (this.drawingCanvas) {
+            this.drawingCanvas.width = width;
+            this.drawingCanvas.height = height;
+        }
+
+        // Re-setup Preview (Scale might change)
+        this.setupPreview({ width, height });
+
+        // Render
+        this.requestRender();
     }
 
     generateUI() {
@@ -350,6 +458,30 @@ export class ImageProcessor {
             this.showGrid = v;
             this.requestRender();
         });
+
+        // Preview Resolution Selector - absolute pixel sizes matching export
+        viewGroup.addSelect("PREVIEW SIZE", [
+            { label: "1x1", value: 1 },
+            { label: "2x2", value: 2 },
+            { label: "4x4", value: 4 },
+            { label: "8x8", value: 8 },
+            { label: "16x16", value: 16 },
+            { label: "32x32", value: 32 },
+            { label: "64x64", value: 64 },
+            { label: "128x128", value: 128 },
+            { label: "256x256", value: 256 },
+            { label: "512x512", value: 512 },
+            { label: "1024x1024", value: 1024 },
+            { label: "2048x2048", value: 2048 }
+        ], this.previewResolution || 512, (v) => {
+            this.previewResolution = parseInt(v);
+            console.log("Preview resolution changed to:", this.previewResolution);
+            // Rebuild preview with new resolution
+            if (this.sourceCanvas && this.sourceCanvas.width > 0) {
+                this.setupPreviewWithResolution(this.previewResolution);
+                this.requestRender();
+            }
+        }, "Preview at export resolution");
 
         // --- TEXTURE / BACKGROUND CONTROLS ---
         const bgGroup = this.ui.createModuleGroup("CANVAS / TEXTURE EXPORT", null, "Hide source image to export texture overlays.");
@@ -386,14 +518,19 @@ export class ImageProcessor {
         resGroup.style.display = 'flex';
         resGroup.style.flexDirection = 'column';
         resGroup.style.gap = '5px';
-        resGroup.innerHTML = `<label style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">OUTPUT RESOLUTIONS (Generate Multiple)</label>`;
+        resGroup.innerHTML = `<label style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">OUTPUT RESOLUTIONS</label>`;
 
-        const resolutions = [16, 32, 64, 128, 256, 512];
+        const resolutions = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+        const resContainer = document.createElement('div');
+        resContainer.style.display = 'grid';
+        resContainer.style.gridTemplateColumns = '1fr 1fr';
+        resContainer.style.gap = '5px';
+
         resolutions.forEach(res => {
             const row = document.createElement('div');
             row.style.display = 'flex';
             row.style.alignItems = 'center';
-            row.style.gap = '10px';
+            row.style.gap = '5px';
 
             const cb = document.createElement('input');
             cb.type = 'checkbox';
@@ -401,13 +538,14 @@ export class ImageProcessor {
             cb.onchange = (e) => this.exportSettings.resolutions[res] = e.target.checked;
 
             const lbl = document.createElement('label');
-            lbl.textContent = `${res}x${res}`;
-            lbl.style.fontSize = '0.9rem';
+            lbl.textContent = `${res}x`;
+            lbl.style.fontSize = '0.85rem';
 
             row.appendChild(cb);
             row.appendChild(lbl);
-            resGroup.appendChild(row);
+            resContainer.appendChild(row);
         });
+        resGroup.appendChild(resContainer);
 
         // Current/Original
         const rowOrg = document.createElement('div');
@@ -493,27 +631,56 @@ export class ImageProcessor {
     }
 
     render() {
-        if (!this.originalImage) return;
+        console.log("=== RENDER START ===");
 
-        // Try GPU Render First
-        if (this.tryGPURender(this.originalImage, 1.0)) return;
+        if (!this.sourceCanvas) {
+            console.error("RENDER ABORT: sourceCanvas is null/undefined");
+            return;
+        }
+
+        console.log("sourceCanvas dimensions:", this.sourceCanvas.width, "x", this.sourceCanvas.height);
+        console.log("main canvas dimensions:", this.canvas.width, "x", this.canvas.height);
+        console.log("backgroundMode:", this.backgroundMode);
+
+        // Try GPU Render First - Passing sourceCanvas instead of Image
+        if (this.tryGPURender(this.sourceCanvas, 1.0)) {
+            console.log("RENDER: GPU render completed");
+            return;
+        }
+
+        console.log("RENDER: Falling back to CPU render");
 
         // Fallback to CPU
-        // 1. Clear / Setup Background
         const w = this.canvas.width;
         const h = this.canvas.height;
+
+        if (w === 0 || h === 0) {
+            console.error("RENDER ABORT: canvas has zero dimensions", w, h);
+            return;
+        }
+
         this.ctx.clearRect(0, 0, w, h);
 
+        // CRITICAL: Disable antialiasing for pixel-perfect rendering
+        this.ctx.imageSmoothingEnabled = false;
+
         if (this.backgroundMode === 'color') {
+            console.log("RENDER: Drawing solid color background");
             this.ctx.fillStyle = this.backgroundColor;
             this.ctx.fillRect(0, 0, w, h);
         } else if (this.backgroundMode === 'image') {
-            this.ctx.drawImage(this.originalImage, 0, 0, w, h);
+            console.log("RENDER: Drawing sourceCanvas to main canvas (no smoothing)");
+            // Draw from Source Canvas (which contains the edited image)
+            try {
+                this.ctx.drawImage(this.sourceCanvas, 0, 0, w, h);
+                console.log("RENDER: drawImage completed successfully");
+            } catch (e) {
+                console.error("RENDER: drawImage FAILED:", e);
+            }
         }
         // If transparent, we already cleared.
 
         // Run Pipeline on Preview
-        // Explicitly pass scaleFactor=1.0 for Preview
         this.pipeline.forEach(effect => {
             effect.process(this.ctx, this.canvas.width, this.canvas.height, this.state[effect.id], 1.0);
         });
@@ -521,7 +688,10 @@ export class ImageProcessor {
         if (this.showGrid) {
             this.drawGrid();
         }
+
+        console.log("=== RENDER COMPLETE ===");
     }
+
 
     drawGrid() {
         const w = this.canvas.width;
@@ -550,6 +720,10 @@ export class ImageProcessor {
     }
 
     tryGPURender(source, scaleFactor) {
+        // DEBUG: Force CPU render to rule out WebGL issues
+        console.warn("ImageProcessor: WebGL disabled for debugging.");
+        return false;
+
         if (!this.useGPU || !this.glManager) return false;
 
         // Check if ALL enabled effects have WebGL support
@@ -831,55 +1005,62 @@ export class ImageProcessor {
         this.toggleLoading(true);
 
         try {
-            // 1. Prepare Full Res Canvas
-            const w = this.originalImage.naturalWidth;
-            const h = this.originalImage.naturalHeight;
-            const cvs = document.createElement('canvas');
-            cvs.width = w; cvs.height = h;
-            const ctx = cvs.getContext('2d');
-
-            // Draw Source
-            ctx.drawImage(this.originalImage, 0, 0, w, h);
-
-            // Apply Pipeline (Same as Export) to get the final Dithered look
-            // But we might want ONLY the dither effect? 
-            // Usually separation is based on the FINAL look.
-            // So Apply PreProcess -> Halftone -> Dither
-            // But NOT Glitch? Glitch ruins separation usually.
-            // Let's ask pipeline to process up to Dither.
-
-            const scale = w / this.canvas.width;
-
-            for (let effect of this.pipeline) {
-                if (effect.id === 'glitch_v1') continue; // Skip Glitch for separation safety? User might want it though.
-                // Let's include everything that affects color.
-                effect.process(ctx, w, h, this.state[effect.id], scale);
-            }
-
-            // 2. Generate Maps
-            const layers = await SeparationExporter.generate(cvs, ditherState); // returns { filename: blob }
-
-            // 3. Zip
             if (!window.JSZip) throw new Error("JSZip library not loaded.");
             const zip = new JSZip();
+            const folder = zip.folder("textures");
 
-            // Add files
-            for (let [name, blob] of Object.entries(layers)) {
-                zip.file(`${name}.png`, blob);
+            for (const res of resolutions) {
+                let w, h;
+                if (res === 'original') {
+                    // Use Source Canvas dimensions
+                    w = this.sourceCanvas.width;
+                    h = this.sourceCanvas.height;
+                } else {
+                    w = res;
+                    h = res;
+                    // Maintain aspect ratio if source is not square
+                    if (this.sourceCanvas.width !== this.sourceCanvas.height) {
+                        const ratio = this.sourceCanvas.height / this.sourceCanvas.width;
+                        h = Math.round(w * ratio);
+                    }
+                }
+
+                const cvs = document.createElement('canvas');
+                cvs.width = w;
+                cvs.height = h;
+                const ctx = cvs.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+
+                // Draw Source (Scaled)
+                ctx.drawImage(this.sourceCanvas, 0, 0, w, h);
+
+                // Apply Effects (Scaled)
+                // Note: We use 1.0 scale relative to the new canvas size
+                this.pipeline.forEach(effect => {
+                    // Check if effect is enabled
+                    if (this.state[effect.id] && this.state[effect.id].enabled) {
+                        effect.process(ctx, w, h, this.state[effect.id], 1.0);
+                    }
+                });
+
+                // Add to Zip
+                const blob = await new Promise(r => cvs.toBlob(r, 'image/png'));
+                const filename = res === 'original' ? `original_${w}x${h}.png` : `texture_${w}x${h}.png`;
+                folder.file(filename, blob);
             }
 
             const content = await zip.generateAsync({ type: "blob" });
 
-            // 4. Download
+            // Download
             const url = URL.createObjectURL(content);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `VOID_SEPARATIONS_${Date.now()}.zip`;
+            a.download = `MC_TEXTURES_${Date.now()}.zip`;
             a.click();
             URL.revokeObjectURL(url);
 
         } catch (e) {
-            alert("Separation Export Failed: " + e.message);
+            alert("Export Failed: " + e.message);
             console.error(e);
         } finally {
             this.toggleLoading(false);
@@ -955,6 +1136,26 @@ export class ImageProcessor {
                 btn.textContent = "SAVED!";
                 setTimeout(() => btn.textContent = oldText, 1000);
             }
+        }
+    }
+    stop() {
+        if (this.videoElement) {
+            this.videoElement.pause();
+            this.videoElement.src = "";
+            this.videoElement.remove();
+            this.videoElement = null;
+        }
+        if (this.animator) {
+            this.animator = null; // or stop()
+        }
+        if (this.batchManager) {
+            this.batchManager.destroy();
+            this.batchManager = null;
+        }
+        // Cleanup WebGL
+        if (this.glManager) {
+            // this.glManager.destroy(); // if exists
+            this.glManager = null;
         }
     }
 }
