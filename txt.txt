@@ -1,0 +1,6 @@
+Quality Resolution Best For
+Minimum		1x all the way to 8x	Maximum FPS, "Potato" PCs
+Default		16x	Vanilla gameplay
+Low HD		32x all the way to 64x	Minor graphical upgrade
+High HD		128x all the way to 256x	Detailed, better visuals
+Maximum		512x all the way to 4K	Photorealistic, high-end PCs

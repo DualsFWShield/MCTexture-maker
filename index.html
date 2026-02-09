@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MC Creator | Minecraft Pack Builder</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vorbis-encoder-js@1.0.2/lib/vorbis_encoder.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo">
+                <span class="logo-icon">⛏️</span>
+                <h1>MC Creator</h1>
+            </div>
+
+            <!-- Navigation Tabs -->
+            <nav class="nav-tabs">
+                <button class="nav-tab active" data-tab="textures">🖼️ Textures</button>
+                <button class="nav-tab" data-tab="sounds">🔊 Sons</button>
+                <button class="nav-tab" data-tab="datapack">⚙️ Datapack</button>
+                <button class="nav-tab" data-tab="shaders">✨ Shaders</button>
+                <button class="nav-tab" data-tab="pack">📦 Pack</button>
+            </nav>
+
+            <div class="header-controls">
+                <button id="import-mc-btn" class="btn btn-secondary">📁
+                    Import .minecraft</button>
+                <button id="export-btn" class="btn btn-primary" disabled>EXPORTER</button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="workspace">
+
+            <!-- Left Panel: Asset Browser / Controls -->
+            <aside class="panel control-panel">
+                <div class="panel-header">
+                    <h2>ASSETS</h2>
+                    <span class="panel-status" id="active-tool-status">NO INPUT</span>
+                </div>
+
+                <div class="asset-browser" id="asset-browser">
+                    <div class="empty-state-rack">
+                        Cliquez sur "Import .minecraft" pour charger les assets du jeu.
+                    </div>
+                </div>
+
+                <div class="modules-rack" id="modules-rack">
+                    <!-- Effect modules injected via JS -->
+                </div>
+                <!-- Batch Manager Container -->
+                <div id="ui-container"></div>
+            </aside>
+
+            <!-- Center View: Preview / Editor -->
+            <section class="preview-area" id="drop-zone">
+                <!-- Tab Content: Textures -->
+                <div class="tab-content" id="tab-textures">
+                    <div class="preview-container" id="preview-container">
+                        <div class="upload-prompt">
+                            <div class="icon-upload">⇪</div>
+                            <h3>GLISSEZ UNE TEXTURE</h3>
+                            <p>FORMATS: PNG, JPG (16x16, 32x32, 64x64...)</p>
+                            <input type="file" id="file-input" hidden accept="image/*,audio/*">
+                            <button class="btn btn-secondary"
+                                onclick="document.getElementById('file-input').click()">PARCOURIR</button>
+                        </div>
+                        <canvas id="main-canvas" hidden></canvas>
+                        <div id="audio-visualizer" hidden></div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Sounds -->
+                <div class="tab-content" id="tab-sounds" hidden>
+                    <div class="sounds-workspace">
+                        <div class="upload-prompt">
+                            <div class="icon-upload">🔊</div>
+                            <h3>ÉDITEUR DE SONS</h3>
+                            <p>FORMATS: OGG, WAV, MP3</p>
+                            <button class="btn btn-secondary"
+                                onclick="document.getElementById('file-input').click()">CHARGER UN SON</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Datapack -->
+                <div class="tab-content" id="tab-datapack" hidden>
+                    <div class="datapack-workspace">
+                        <div class="datapack-tools-sidebar">
+                            <h3>TOOLS</h3>
+                            <button class="tool-btn active" data-tool="recipe">📜 Recipes</button>
+                            <button class="tool-btn" data-tool="function">💻 Functions</button>
+                            <button class="tool-btn" data-tool="mob">🧟 Mobs</button>
+                            <button class="tool-btn" data-tool="loot">💰 Loot</button>
+                        </div>
+                        <div class="datapack-editor-container" id="datapack-editor-container">
+                            <!-- Editor injected here -->
+                            <div class="empty-editor-state">
+                                Select a tool from the sidebar to begin.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Shaders -->
+                <div class="tab-content" id="tab-shaders" hidden>
+                    <div class="shader-workspace">
+                        <div class="shader-sidebar">
+                            <h3>PROGRAMS</h3>
+                            <button class="shader-prog-btn active" data-prog="gbuffers_terrain">Terrain</button>
+                            <button class="shader-prog-btn" data-prog="gbuffers_water">Water</button>
+                            <button class="shader-prog-btn" data-prog="gbuffers_skybasic">Sky</button>
+                            <button class="shader-prog-btn" data-prog="gbuffers_entities">Entities</button>
+                            <button class="shader-prog-btn" data-prog="composite">Composite (Post)</button>
+                            <button class="shader-prog-btn" data-prog="final">Final</button>
+                        </div>
+
+                        <div class="shader-main-area">
+                            <div class="shader-toolbar">
+                                <label>Template:
+                                    <select id="shader-template-select">
+                                        <option value="basic">Basic (Vanilla-like)</option>
+                                        <option value="waving">Waving Plants</option>
+                                        <option value="cel">Cel Shading</option>
+                                        <option value="grayscale">Grayscale</option>
+                                    </select>
+                                </label>
+                                <button class="btn-small" id="apply-template-btn">Apply Template</button>
+                                <span style="flex:1"></span>
+                                <button class="btn btn-primary" id="save-shader-btn">SAVE PROGRAM TO PACK</button>
+                            </div>
+
+                            <div class="shader-editors-split">
+                                <div class="shader-editor-pane">
+                                    <div class="pane-header">Vertex Shader (.vsh)</div>
+                                    <div class="code-area" id="vsh-editor" contenteditable="true" spellcheck="false">
+                                    </div>
+                                </div>
+                                <div class="shader-editor-pane">
+                                    <div class="pane-header">Fragment Shader (.fsh)</div>
+                                    <div class="code-area" id="fsh-editor" contenteditable="true" spellcheck="false">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Content: Pack Manager -->
+                <div class="tab-content" id="tab-pack" hidden>
+                    <div class="pack-manager-workspace">
+                        <div class="pack-settings-panel">
+                            <h2>📦 Pack Settings</h2>
+                            <div class="form-group">
+                                <label>Pack Name</label>
+                                <input type="text" id="pack-name" value="My Resource Pack" class="input-field">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea id="pack-desc" class="input-field" rows="2">Created with MC Creator</textarea>
+                            </div>
+                            <div class="form-group">
+                                <label>Detected Type</label>
+                                <div id="pack-type-display" class="input-field"
+                                    style="background: rgba(0,0,0,0.2); color: var(--text-muted);">
+                                    Empty
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Target Version</label>
+                                <select id="pack-format" class="input-field">
+                                    <!-- Populated by JS -->
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Pack Icon</label>
+                                <div class="drop-zone-mini" id="pack-icon-drop">
+                                    Drop pack.png here or Click
+                                </div>
+                                <input type="file" id="pack-icon-input" hidden accept="image/*">
+                            </div>
+                            <button class="btn btn-primary btn-full" id="build-pack-btn">🚀 BUILD & DOWNLOAD
+                                ZIP</button>
+                        </div>
+
+                        <div class="pack-contents-panel">
+                            <h3>Files in Pack (<span id="pack-file-count">0</span>)</h3>
+                            <div class="file-list-container">
+                                <table class="file-list-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Path</th>
+                                            <th>Type</th>
+                                            <th>Size</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="pack-file-list">
+                                        <!-- Populated by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <div class="footer-info">
+                <span id="file-info">Aucun fichier chargé</span>
+            </div>
+            <div class="footer-version">
+                MC Creator v1.0.0
+            </div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script type="module" src="js/main.js"></script>
+</body>
+
+</html>
